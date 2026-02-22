@@ -221,7 +221,7 @@ PR_SENDER_EMAIL = "http://schemas.microsoft.com/mapi/proptag/0x0065001F"
 
 
 def _build_dasl_filter(query: str, date_from: str, date_to: str,
-                       sender: str, to: str) -> str:
+                       sender: str, to: str, is_read: bool | None = None) -> str:
     """Build a unified DASL filter string for Folder.GetTable().
 
     All conditions use DASL syntax so they combine in a single filter.
@@ -262,6 +262,9 @@ def _build_dasl_filter(query: str, date_from: str, date_to: str,
         word_parts = [f"\"urn:schemas:httpmail:displayto\" LIKE '%{w}%'"
                       for w in words]
         parts.append(f"({' AND '.join(word_parts)})")
+
+    if is_read is not None:
+        parts.append(f"\"urn:schemas:httpmail:read\" = {1 if is_read else 0}")
 
     if not parts:
         return ""
@@ -490,6 +493,7 @@ def search_emails(
     date_from: str = "",
     date_to: str = "",
     include_archive: bool = False,
+    is_read: bool | None = None,
     oldest_first: bool = False,
     max_results: int = 20,
 ) -> dict:
@@ -506,6 +510,7 @@ def search_emails(
         date_from: Start date YYYY-MM-DD (inclusive).
         date_to: End date YYYY-MM-DD (inclusive).
         include_archive: Also search the Online Archive.
+        is_read: Filter by read status. True = read only, False = unread only.
         oldest_first: Sort oldest-first instead of newest-first.
         max_results: Max results to return (default 20).
     """
@@ -513,7 +518,7 @@ def search_emails(
     try:
         namespace = _get_namespace()
         fname = folder.lower()
-        filter_str = _build_dasl_filter(query, date_from, date_to, sender, to)
+        filter_str = _build_dasl_filter(query, date_from, date_to, sender, to, is_read)
         results = []
 
         # Search archive first when oldest_first, since it has older emails
