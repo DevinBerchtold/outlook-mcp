@@ -2,9 +2,10 @@
 
 An MCP server that exposes Outlook emails and calendar events to AI assistants via COM automation.
 
-**Tools:** `list_folders`, `search_emails`, `search_calendar`, `read_item`
+- **Tools:** `list_folders`, `search_emails`, `search_calendar`, `read_item`
+- **Prompts:** `weekly_summary`, `agenda`, `next_meeting`, `unanswered_emails`, `annual_review`
 
-![Outlook MCP tools in action](images/screenshot.png)
+![Outlook MCP tools list](images/screenshot.png)
 
 ## Setup
 

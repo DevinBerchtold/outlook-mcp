@@ -677,61 +677,55 @@ def read_item(entry_id: str, full_body: bool = False) -> dict:
 
 @mcp.prompt()
 def weekly_summary() -> str:
-    """Summarize what I did each day this past work week based on my emails and calendar."""
+    """Summarize what I did this past week based on my emails and calendar."""
     return (
-        "Use search_calendar and search_emails (both inbox and sent) for the past "
-        "Monday through Friday. For each day, summarize my meetings and notable "
-        "email activity. End with any themes or highlights for the week."
+        "Use search_calendar and search_emails (both inbox and sent) for the past Monday through Friday. "
+        "For each day, summarize my meetings and notable email activity. "
+        "End with any themes or highlights for the week."
     )
 
 
 @mcp.prompt()
 def agenda() -> str:
-    """Show my agenda for today with relevant email context."""
+    """Show my agenda for today with relevant context."""
     return (
-        "Search my calendar for today. For each meeting, search for recent emails "
-        "involving the organizer or related to the meeting subject. Present my "
-        "schedule in chronological order with any relevant email context that "
-        "would help me prepare."
+        "Search my calendar for today. "
+        "For each meeting, search for recent emails involving the organizer or related to the meeting subject. "
+        "Present my schedule in chronological order with any relevant email context that would help me prepare."
     )
 
 
 @mcp.prompt()
 def next_meeting() -> str:
-    """Prep me for my next upcoming meeting."""
+    """Prep me for my next meeting."""
     return (
-        "Search my calendar for today to find my next upcoming meeting. Then "
-        "search for recent emails (past 7 days, both inbox and sent) involving "
-        "the attendees or related to the meeting subject. Give me a briefing: "
-        "who's attending, what the meeting is about, and any relevant email "
-        "threads I should be aware of."
+        "Search my calendar for today to find my next upcoming meeting. "
+        "Then search for recent emails (past 7 days, both inbox and sent) involving the attendees or related to the meeting subject. "
+        "Give me a briefing: who's attending, what the meeting is about, and any relevant email threads I should be aware of."
     )
 
 
 @mcp.prompt()
 def unanswered_emails() -> str:
-    """Find emails that look like they need a reply from me."""
+    """Find emails I should respond to."""
     return (
-        "Search my inbox for the past 5 days, then search my sent folder for "
-        "the same period. Compare them to identify inbox emails that appear to "
-        "ask me a question or request action, where I haven't sent a reply to "
-        "that thread. List them with the sender, date, subject, and a brief "
-        "note on what seems to be needed."
+        "Search my inbox for the past 5 days, then search my sent folder for the same period. "
+        "Compare them to identify inbox emails that appear to ask me a question or request action, where I haven't sent a reply to that thread. "
+        "List them with the sender, date, subject, and a brief note on what seems to be needed."
     )
 
 
 @mcp.prompt()
 def annual_review() -> str:
-    """Analyze the past year of emails for accomplishments, contributions, and praise to support an annual review."""
+    """Analyze the past year of emails for evidence of contributions to support an annual review."""
     return (
-        "Help me prepare for my annual performance review. Search my sent "
-        "folder and inbox over the past 12 months. First identify my most "
-        "frequent contacts to understand key relationships. Then search for "
-        "evidence of accomplishments, completed work, praise from others, and "
-        "examples of helping or unblocking teammates. Read promising results "
-        "for detail. Compile a summary with key accomplishments, recognition "
-        "received, and examples of collaboration — include direct quotes where "
-        "they strengthen the evidence."
+        "Search my sent folder and inbox over the past 12 months. "
+        "Help me prepare for my annual performance review. "
+        "First identify my most frequent contacts to understand key relationships. "
+        "Then search for evidence of accomplishments, completed work, praise from others, and examples of helping or unblocking teammates. "
+        "Read promising results for detail. "
+        "Compile a summary with key accomplishments, recognition received, and examples of collaboration. "
+        "Include direct quotes where they strengthen the evidence."
     )
 
 
