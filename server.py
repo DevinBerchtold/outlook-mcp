@@ -108,8 +108,10 @@ def _get_body(item, truncate: bool = True) -> str:
         if html_body:
             body = strip_html(html_body)
     body = body.strip()
-    if truncate and len(body) > MAX_BODY_LENGTH:
-        body = body[:MAX_BODY_LENGTH] + "\n\n[body truncated — use read_item with full_body=true to get the complete text]"
+    if truncate:
+        if len(body) > MAX_BODY_LENGTH:
+            body = body[:MAX_BODY_LENGTH] + "\n\n[body truncated — use read_item with full_body=true to get the complete text]"
+        body = _shorten_urls(body)
     return body
 
 
@@ -180,12 +182,44 @@ def _assign_short_id(entry_id: str) -> str:
 
 
 def _resolve_id(id_str: str) -> str:
-    """Resolve a short ID to a real entry_id, or pass through if already a full ID."""
-    real_id = _id_cache.get(id_str)
+    """Resolve a short ID to a real entry_id, or pass through if already a full ID.
+
+    Strips a 'url:' prefix if present so that [url:xxxx] placeholders resolve
+    the same as plain short IDs.
+    """
+    key = id_str[4:] if id_str.startswith("url:") else id_str
+    real_id = _id_cache.get(key)
     if real_id is not None:
-        _id_cache.move_to_end(id_str)
+        _id_cache.move_to_end(key)
         return real_id
     return id_str
+
+
+# ---------------------------------------------------------------------------
+# URL shortening
+# ---------------------------------------------------------------------------
+
+_URL_LENGTH_THRESHOLD = 80
+_URL_RE = re.compile(r'https?://\S+')
+
+
+def _shorten_urls(text: str) -> str:
+    """Replace long URLs with [url:ID] placeholders, caching originals in _id_cache."""
+
+    def _replace(match: re.Match) -> str:
+        url = match.group(0)
+        # Strip trailing punctuation that's unlikely part of the URL
+        while url and url[-1] in ').,;:!?\'"':
+            url = url[:-1]
+        if len(url) <= _URL_LENGTH_THRESHOLD:
+            return match.group(0)  # leave short URLs as-is
+
+        key = _assign_short_id(url)
+        # Preserve any trailing chars we stripped from the match
+        trailing = match.group(0)[len(url):]
+        return f"[url:{key}]{trailing}"
+
+    return _URL_RE.sub(_replace, text)
 
 
 # ---------------------------------------------------------------------------
@@ -618,16 +652,21 @@ def search_calendar(
 
 @mcp.tool(icons=[_icon_read_item])
 def read_item(entry_id: str, full_body: bool = False) -> dict:
-    """Read the full content of an email or calendar event by its ID.
+    """Read the full content of an email, calendar event, or URL by its ID.
 
     Args:
-        entry_id: The short id from search_emails/search_calendar results, or a full EntryID.
+        entry_id: Item ID from search_emails/search_calendar results.
         full_body: Return the complete body without truncation (default false).
     """
+    real_id = _resolve_id(entry_id)
+
+    # If the resolved value is a URL, return it directly
+    if real_id.startswith("https://") or real_id.startswith("http://"):
+        return {"url": real_id}
+
     pythoncom.CoInitialize()
     try:
         namespace = _get_namespace()
-        real_id = _resolve_id(entry_id)
         item = namespace.GetItemFromID(real_id)
         msg_class = getattr(item, 'MessageClass', '') or ''
         if msg_class.startswith('IPM.Appointment'):
