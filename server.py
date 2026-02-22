@@ -18,6 +18,7 @@ import os
 import pythoncom
 import win32com.client
 from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from fastmcp import FastMCP
 from mcp.types import Icon
@@ -77,6 +78,16 @@ def _find_folder_in_store(namespace, store_name: str, folder_name: str):
                     return folder
             return None
     return None
+
+
+@contextmanager
+def _com_session():
+    """CoInitialize, yield a MAPI namespace, CoUninitialize."""
+    pythoncom.CoInitialize()
+    try:
+        yield _get_namespace()
+    finally:
+        pythoncom.CoUninitialize()
 
 
 # ---------------------------------------------------------------------------
@@ -468,9 +479,7 @@ def _extract_calendar(item, truncate: bool = True) -> dict:
 @mcp.tool(icons=[_icon_list_folders])
 def list_folders() -> list[dict]:
     """List all Outlook stores and their top-level folders with item counts."""
-    pythoncom.CoInitialize()
-    try:
-        namespace = _get_namespace()
+    with _com_session() as namespace:
         result = []
         for i in range(1, namespace.Stores.Count + 1):
             store = namespace.Stores.Item(i)
@@ -492,8 +501,6 @@ def list_folders() -> list[dict]:
                 store_info["error"] = str(e)
             result.append(store_info)
         return result
-    finally:
-        pythoncom.CoUninitialize()
 
 
 @mcp.tool(icons=[_icon_search_emails])
@@ -527,9 +534,7 @@ def search_emails(
     if date_to and not date_from:
         raise ValueError("date_from is required when date_to is specified.")
 
-    pythoncom.CoInitialize()
-    try:
-        namespace = _get_namespace()
+    with _com_session() as namespace:
         filter_str = _build_dasl_filter(query, date_from, date_to, sender, to, is_read)
 
         if folder:
@@ -545,8 +550,6 @@ def search_emails(
 
         results = _search_folder(target_folder, filter_str, max_results, earliest_first)
         return {"count": len(results), "max_results": max_results, "results": results}
-    finally:
-        pythoncom.CoUninitialize()
 
 
 @mcp.tool(icons=[_icon_search_calendar])
@@ -558,7 +561,7 @@ def search_calendar(
     earliest_first: bool = True,
     max_results: int = 20,
 ) -> dict:
-    """Search Outlook calendar events in a date range. Returns summaries with short id for read_item.
+    """Search Outlook calendar events in a date range. Returns summaries with IDs for read_item.
 
     Args:
         date_from: Start date YYYY-MM-DD (inclusive). Defaults to today.
@@ -573,9 +576,7 @@ def search_calendar(
     if response and response.lower() not in _RESPONSE_LOOKUP:
         raise ValueError(f"Unknown response '{response}'. Use: {', '.join(_RESPONSE_LOOKUP)}")
 
-    pythoncom.CoInitialize()
-    try:
-        namespace = _get_namespace()
+    with _com_session() as namespace:
         folder = namespace.GetDefaultFolder(OL_FOLDER_CALENDAR)
 
         # Default to today if no date_from
@@ -646,8 +647,6 @@ def search_calendar(
             results.reverse()
         results = results[:max_results]
         return {"count": len(results), "max_results": max_results, "results": results}
-    finally:
-        pythoncom.CoUninitialize()
 
 
 @mcp.tool(icons=[_icon_read_item])
@@ -664,16 +663,12 @@ def read_item(entry_id: str, full_body: bool = False) -> dict:
     if real_id.startswith("https://") or real_id.startswith("http://"):
         return {"url": real_id}
 
-    pythoncom.CoInitialize()
-    try:
-        namespace = _get_namespace()
+    with _com_session() as namespace:
         item = namespace.GetItemFromID(real_id)
         msg_class = getattr(item, 'MessageClass', '') or ''
         if msg_class.startswith('IPM.Appointment'):
             return _extract_calendar(item, truncate=not full_body)
         return _extract_mail(item, truncate=not full_body)
-    finally:
-        pythoncom.CoUninitialize()
 
 
 # ---------------------------------------------------------------------------
