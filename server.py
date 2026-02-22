@@ -276,7 +276,7 @@ def _build_dasl_filter(query: str, date_from: str, date_to: str,
 # ---------------------------------------------------------------------------
 
 def _search_folder(folder, filter_str: str, max_results: int,
-                    oldest_first: bool = False) -> list[dict]:
+                    earliest_first: bool = False) -> list[dict]:
     """Search a folder using GetTable() and return lightweight summary dicts.
 
     GetTable avoids loading full COM MailItem objects — it fetches only the
@@ -296,7 +296,7 @@ def _search_folder(folder, filter_str: str, max_results: int,
     table.Columns.Add("To")
     table.Columns.Add("CC")
     table.Columns.Add("MessageClass")
-    table.Sort("SentOn", not oldest_first)
+    table.Sort("SentOn", not earliest_first)
 
     results = []
     while not table.EndOfTable and len(results) < max_results:
@@ -360,8 +360,10 @@ BUSY_STATUS_MAP = {
     4: "working_elsewhere",
 }
 
+_RESPONSE_LOOKUP = {v: k for k, v in RESPONSE_STATUS_MAP.items()}
 
-def _extract_full(item, truncate: bool = True) -> dict:
+
+def _extract_mail(item, truncate: bool = True) -> dict:
     """Extract full details from a COM mail item."""
     sent_on = getattr(item, 'SentOn', None)
     body = _get_body(item, truncate=truncate)
@@ -472,10 +474,11 @@ def list_folders() -> list[dict]:
                         count = folder.Items.Count
                     except Exception:
                         count = -1
-                    store_info["folders"].append({
-                        "name": folder.Name,
-                        "count": count,
-                    })
+                    if count != 0:
+                        store_info["folders"].append({
+                            "name": folder.Name,
+                            "count": count,
+                        })
             except Exception as e:
                 store_info["error"] = str(e)
             result.append(store_info)
@@ -494,7 +497,7 @@ def search_emails(
     date_to: str = "",
     include_archive: bool = False,
     is_read: bool | None = None,
-    oldest_first: bool = False,
+    earliest_first: bool = False,
     max_results: int = 20,
 ) -> dict:
     """Search Outlook emails with filters. Returns summaries with short id for read_item.
@@ -511,9 +514,12 @@ def search_emails(
         date_to: End date YYYY-MM-DD (inclusive).
         include_archive: Also search the Online Archive.
         is_read: Filter by read status. True = read only, False = unread only.
-        oldest_first: Sort oldest-first instead of newest-first.
+        earliest_first: Sort earliest-first instead of latest-first.
         max_results: Max results to return (default 20).
     """
+    if date_to and not date_from:
+        raise ValueError("date_from is required when date_to is specified.")
+
     pythoncom.CoInitialize()
     try:
         namespace = _get_namespace()
@@ -521,8 +527,8 @@ def search_emails(
         filter_str = _build_dasl_filter(query, date_from, date_to, sender, to, is_read)
         results = []
 
-        # Search archive first when oldest_first, since it has older emails
-        archive_first = include_archive and oldest_first
+        # Search archive first when earliest_first, since it has older emails
+        archive_first = include_archive and earliest_first
 
         if archive_first:
             try:
@@ -530,7 +536,7 @@ def search_emails(
                 if archive_folder:
                     results.extend(
                         _search_folder(archive_folder, filter_str,
-                                       max_results, oldest_first))
+                                       max_results, earliest_first))
             except Exception:
                 pass
 
@@ -539,7 +545,7 @@ def search_emails(
             try:
                 primary_folder = _get_default_folder(namespace, fname)
                 results.extend(_search_folder(primary_folder, filter_str,
-                                              max_results - len(results), oldest_first))
+                                              max_results - len(results), earliest_first))
             except Exception:
                 pass
 
@@ -550,8 +556,7 @@ def search_emails(
                 if archive_folder:
                     results.extend(
                         _search_folder(archive_folder, filter_str,
-                                       max_results - len(results),
-                                       oldest_first)
+                                       max_results - len(results), earliest_first)
                     )
             except Exception:
                 pass
@@ -567,7 +572,8 @@ def search_calendar(
     date_from: str = "",
     date_to: str = "",
     query: str = "",
-    include_declined: bool = False,
+    response: str = "",
+    earliest_first: bool = True,
     max_results: int = 20,
 ) -> dict:
     """Search Outlook calendar events in a date range. Returns summaries with short id for read_item.
@@ -576,9 +582,15 @@ def search_calendar(
         date_from: Start date YYYY-MM-DD (inclusive). Defaults to today.
         date_to: End date YYYY-MM-DD (inclusive). Defaults to date_from (single day).
         query: Filter by subject (partial match).
-        include_declined: Include events you declined (excluded by default).
+        response: Filter by response (accepted, tentative, declined, organized, none, not_responded).
+        earliest_first: Sort earliest-first (default true, showing soonest events first).
         max_results: Max results to return (default 20).
     """
+    if date_to and not date_from:
+        raise ValueError("date_from is required when date_to is specified.")
+    if response and response.lower() not in _RESPONSE_LOOKUP:
+        raise ValueError(f"Unknown response '{response}'. Use: {', '.join(_RESPONSE_LOOKUP)}")
+
     pythoncom.CoInitialize()
     try:
         namespace = _get_namespace()
@@ -593,8 +605,8 @@ def search_calendar(
         start_dt = datetime.strptime(date_from, "%Y-%m-%d")
         end_dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
 
-        # Must Sort THEN IncludeRecurrences THEN Restrict — order matters for
-        # recurring event expansion.
+        # Must Sort ascending THEN IncludeRecurrences THEN Restrict — order
+        # matters for recurring event expansion (descending breaks it).
         items = folder.Items
         items.Sort("[Start]")
         items.IncludeRecurrences = True
@@ -603,15 +615,15 @@ def search_calendar(
             f"[Start] >= '{start_dt.strftime('%m/%d/%Y 00:00')}'"
             f" AND [Start] < '{end_dt.strftime('%m/%d/%Y 00:00')}'"
         )
+        restrict_str += " AND [MeetingStatus] <> 5 AND [MeetingStatus] <> 7"
         items = items.Restrict(restrict_str)
 
         results = []
         item = items.GetFirst()
-        while item and len(results) < max_results:
+        while item and (not earliest_first or len(results) < max_results):
             try:
-                # Skip declined events unless requested
-                response = getattr(item, 'ResponseStatus', 0)
-                if not include_declined and response == 4:
+                resp = getattr(item, 'ResponseStatus', 0)
+                if response and RESPONSE_STATUS_MAP.get(resp) != response.lower():
                     item = items.GetNext()
                     continue
 
@@ -633,7 +645,7 @@ def search_calendar(
                     "subject": subject,
                     "location": getattr(item, 'Location', '') or '',
                     "organizer": getattr(item, 'Organizer', '') or '',
-                    "response": RESPONSE_STATUS_MAP.get(response, str(response)),
+                    "response": RESPONSE_STATUS_MAP.get(resp, str(resp)),
                 }
 
                 busy = getattr(item, 'BusyStatus', 2)
@@ -648,6 +660,9 @@ def search_calendar(
                 pass
             item = items.GetNext()
 
+        if not earliest_first:
+            results.reverse()
+        results = results[:max_results]
         return {"count": len(results), "max_results": max_results, "results": results}
     finally:
         pythoncom.CoUninitialize()
@@ -669,7 +684,7 @@ def read_item(entry_id: str, full_body: bool = False) -> dict:
         msg_class = getattr(item, 'MessageClass', '') or ''
         if msg_class.startswith('IPM.Appointment'):
             return _extract_calendar(item, truncate=not full_body)
-        return _extract_full(item, truncate=not full_body)
+        return _extract_mail(item, truncate=not full_body)
     finally:
         pythoncom.CoUninitialize()
 
