@@ -37,31 +37,16 @@ _icon_read_item = _load_icon("mail-read.png")
 mcp = FastMCP("Outlook", icons=[_icon_server], instructions=(
     "Search and read Outlook emails and calendar events. "
     "Use list_folders to discover available mail stores/folders. "
-    "Use search_emails to find emails by date, sender, recipient, or keyword. "
-    "Use search_calendar to find calendar events in a date range. "
-    "Use read_item with the short id from search results to get full content "
-    "(works for both emails and calendar events). "
-    "Recent emails are in the primary mailbox; older emails are in the Online Archive. "
-    "Use include_archive=true to also search archived emails."
+    "Use search_emails/search_calendar to find emails and calendar events. "
+    "Use read_item with id from search results to get full content (both emails and calendar events). "
+    "Recent emails are in the primary mailbox; older emails may be in other stores (such as 'Online Archive')."
 ))
 
 # ---------------------------------------------------------------------------
 # Outlook folder-type constants (OlDefaultFolders enumeration)
 # ---------------------------------------------------------------------------
-OL_FOLDER_DELETED = 3
-OL_FOLDER_SENT = 5
 OL_FOLDER_INBOX = 6
 OL_FOLDER_CALENDAR = 9
-OL_FOLDER_DRAFTS = 16
-OL_FOLDER_JUNK = 23
-
-FOLDER_MAP = {
-    "inbox": OL_FOLDER_INBOX,
-    "sent": OL_FOLDER_SENT,
-    "drafts": OL_FOLDER_DRAFTS,
-    "deleted": OL_FOLDER_DELETED,
-    "junk": OL_FOLDER_JUNK,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -74,33 +59,23 @@ def _get_namespace():
     return outlook.GetNamespace("MAPI")
 
 
-def _get_default_folder(namespace, folder_name: str):
-    """Resolve a friendly folder name to a COM folder object."""
-    folder_id = FOLDER_MAP.get(folder_name.lower())
-    if folder_id is None:
-        raise ValueError(f"Unknown folder '{folder_name}'. Use: inbox, sent, drafts, deleted, junk")
-    return namespace.GetDefaultFolder(folder_id)
+def _find_folder_in_store(namespace, store_name: str, folder_name: str):
+    """Find a folder inside a named store using case-insensitive partial match.
 
-
-def _find_archive_folder(namespace, folder_name: str):
-    """Find a folder inside the Online Archive store."""
-    archive_folder_names = {
-        "inbox": "Inbox",
-        "sent": "Sent Items",
-        "drafts": "Drafts",
-        "deleted": "Deleted Items",
-        "junk": "Junk Email",
-    }
-    target = archive_folder_names.get(folder_name.lower(), folder_name)
+    Returns the folder COM object, or None if the store or folder is not found.
+    """
+    folder_lower = folder_name.lower()
+    store_lower = store_name.lower()
 
     for i in range(1, namespace.Stores.Count + 1):
         store = namespace.Stores.Item(i)
-        if "Online Archive" in store.DisplayName:
+        if store_lower in store.DisplayName.lower():
             root = store.GetRootFolder()
             for j in range(1, root.Folders.Count + 1):
                 folder = root.Folders.Item(j)
-                if folder.Name == target:
+                if folder_lower in folder.Name.lower():
                     return folder
+            return None
     return None
 
 
@@ -490,32 +465,30 @@ def list_folders() -> list[dict]:
 @mcp.tool(icons=[_icon_search_emails])
 def search_emails(
     query: str = "",
-    folder: str = "inbox",
+    folder: str = "",
     sender: str = "",
     to: str = "",
     date_from: str = "",
     date_to: str = "",
-    include_archive: bool = False,
+    store: str = "",
     is_read: bool | None = None,
     earliest_first: bool = False,
     max_results: int = 20,
 ) -> dict:
-    """Search Outlook emails with filters. Returns summaries with short id for read_item.
-
-    Sorted newest-first by default. If count equals max_results, there may be more results.
-    Results do not include body — use read_item for full content.
+    """Search Outlook emails with filters. Returns summaries with IDs for read_item.
+    Results do not include body — use read_item for full content. Sorted newest-first by default.
 
     Args:
-        query: Phrase match in subject/body (words must appear together as a phrase).
-        folder: "inbox", "sent", "drafts", "deleted", or "junk".
+        query: Phrase match in subject/body (words must appear together).
+        folder: Partial match on folder name (e.g. "sent" matches "Sent Items"). Defaults to Inbox.
         sender: Filter by sender display name (partial match).
         to: Filter by recipient display name (partial match).
         date_from: Start date YYYY-MM-DD (inclusive).
-        date_to: End date YYYY-MM-DD (inclusive).
-        include_archive: Also search the Online Archive.
+        date_to: End date YYYY-MM-DD (inclusive). Searches with no bound if omitted.
+        store: Store to search (partial match). Leave empty for primary mailbox.
         is_read: Filter by read status. True = read only, False = unread only.
         earliest_first: Sort earliest-first instead of latest-first.
-        max_results: Max results to return (default 20).
+        max_results: If count equals max_results, more matches may exist.
     """
     if date_to and not date_from:
         raise ValueError("date_from is required when date_to is specified.")
@@ -523,46 +496,21 @@ def search_emails(
     pythoncom.CoInitialize()
     try:
         namespace = _get_namespace()
-        fname = folder.lower()
         filter_str = _build_dasl_filter(query, date_from, date_to, sender, to, is_read)
-        results = []
 
-        # Search archive first when earliest_first, since it has older emails
-        archive_first = include_archive and earliest_first
+        if folder:
+            store_name = store or namespace.DefaultStore.DisplayName
+            target_folder = _find_folder_in_store(namespace, store_name, folder)
+            if target_folder is None:
+                raise ValueError(
+                    f"Could not find folder matching '{folder}' in store '{store_name}'. "
+                    "Use list_folders to see available stores and their folders."
+                )
+        else:
+            target_folder = namespace.GetDefaultFolder(OL_FOLDER_INBOX)
 
-        if archive_first:
-            try:
-                archive_folder = _find_archive_folder(namespace, fname)
-                if archive_folder:
-                    results.extend(
-                        _search_folder(archive_folder, filter_str,
-                                       max_results, earliest_first))
-            except Exception:
-                pass
-
-        # Primary mailbox
-        if len(results) < max_results:
-            try:
-                primary_folder = _get_default_folder(namespace, fname)
-                results.extend(_search_folder(primary_folder, filter_str,
-                                              max_results - len(results), earliest_first))
-            except Exception:
-                pass
-
-        # Online Archive (when newest-first)
-        if include_archive and not archive_first and len(results) < max_results:
-            try:
-                archive_folder = _find_archive_folder(namespace, fname)
-                if archive_folder:
-                    results.extend(
-                        _search_folder(archive_folder, filter_str,
-                                       max_results - len(results), earliest_first)
-                    )
-            except Exception:
-                pass
-
-        trimmed = results[:max_results]
-        return {"count": len(trimmed), "max_results": max_results, "results": trimmed}
+        results = _search_folder(target_folder, filter_str, max_results, earliest_first)
+        return {"count": len(results), "max_results": max_results, "results": results}
     finally:
         pythoncom.CoUninitialize()
 
