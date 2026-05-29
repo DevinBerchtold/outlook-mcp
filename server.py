@@ -61,23 +61,39 @@ def _get_namespace():
 
 
 def _find_folder_in_store(namespace, store_name: str, folder_name: str):
-    """Find a folder inside a named store using case-insensitive partial match.
+    """Find a folder inside a named store, case-insensitive.
 
-    Returns the folder COM object, or None if the store or folder is not found.
+    Prefers exact matches over partial so unambiguous names always win.
     """
     folder_lower = folder_name.lower()
     store_lower = store_name.lower()
 
+    exact_store = None
+    partial_store = None
     for i in range(1, namespace.Stores.Count + 1):
-        store = namespace.Stores.Item(i)
-        if store_lower in store.DisplayName.lower():
-            root = store.GetRootFolder()
-            for j in range(1, root.Folders.Count + 1):
-                folder = root.Folders.Item(j)
-                if folder_lower in folder.Name.lower():
-                    return folder
-            return None
-    return None
+        s = namespace.Stores.Item(i)
+        n = s.DisplayName.lower()
+        if n == store_lower:
+            exact_store = s
+            break
+        if partial_store is None and store_lower in n:
+            partial_store = s
+    store = exact_store or partial_store
+    if store is None:
+        return None
+
+    root = store.GetRootFolder()
+    exact_folder = None
+    partial_folder = None
+    for j in range(1, root.Folders.Count + 1):
+        f = root.Folders.Item(j)
+        n = f.Name.lower()
+        if n == folder_lower:
+            exact_folder = f
+            break
+        if partial_folder is None and folder_lower in n:
+            partial_folder = f
+    return exact_folder or partial_folder
 
 
 @contextmanager
@@ -521,12 +537,12 @@ def search_emails(
 
     Args:
         query: Phrase match in subject/body (words must appear together).
-        folder: Partial match on folder name (e.g. "sent" matches "Sent Items"). Defaults to Inbox.
+        folder: Partial match on folder name (e.g. "sent" matches "Sent Items"). Defaults to Inbox of the live mailbox.
         sender: Filter by sender display name (partial match).
         to: Filter by recipient display name (partial match).
         date_from: Start date YYYY-MM-DD (inclusive).
         date_to: End date YYYY-MM-DD (inclusive). Searches with no bound if omitted.
-        store: Store to search (partial match). Leave empty for primary mailbox.
+        store: Store to search (partial match). Defaults to the live mailbox (where new mail arrives); pass e.g. "Online Archive" to search elsewhere.
         is_read: Filter by read status. True = read only, False = unread only.
         earliest_first: Sort earliest-first instead of latest-first.
         max_results: If count equals max_results, more matches may exist.
@@ -538,7 +554,10 @@ def search_emails(
         filter_str = _build_dasl_filter(query, date_from, date_to, sender, to, is_read)
 
         if folder:
-            store_name = store or namespace.DefaultStore.DisplayName
+            if store:
+                store_name = store
+            else:
+                store_name = namespace.GetDefaultFolder(OL_FOLDER_INBOX).Store.DisplayName
             target_folder = _find_folder_in_store(namespace, store_name, folder)
             if target_folder is None:
                 raise ValueError(
