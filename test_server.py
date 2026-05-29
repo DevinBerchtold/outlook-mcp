@@ -13,7 +13,7 @@ Run a single test:
 
 import re
 import pytest
-from server import (
+from outlook_mcp.server import (
     list_folders, search_emails, search_calendar, read_item,
     _shorten_urls, _id_cache,
 )

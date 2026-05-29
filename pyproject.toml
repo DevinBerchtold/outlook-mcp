@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["outlook_mcp*"]
+
+[tool.setuptools.package-data]
+outlook_mcp = ["images/*.png"]
+
+[project]
+name = "outlook-mcp"
+version = "0.1.0"
+description = "MCP server that exposes Outlook email and calendar via COM automation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "fastmcp>=3,<4",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.scripts]
+outlook-mcp = "outlook_mcp.server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
