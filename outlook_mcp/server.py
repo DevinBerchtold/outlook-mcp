@@ -48,6 +48,7 @@ mcp = FastMCP("Outlook", icons=[_icon_server], instructions=(
 # ---------------------------------------------------------------------------
 OL_FOLDER_INBOX = 6
 OL_FOLDER_CALENDAR = 9
+OL_MAIL_ITEM = 0  # OlItemType
 
 
 # ---------------------------------------------------------------------------
@@ -61,9 +62,9 @@ def _get_namespace():
 
 
 def _find_folder_in_store(namespace, store_name: str, folder_name: str):
-    """Find a folder inside a named store, case-insensitive.
+    """Find a folder at any depth inside a named store, case-insensitive.
 
-    Prefers exact matches over partial so unambiguous names always win.
+    Prefers exact matches over partial, and shallower folders over deeper ones.
     """
     folder_lower = folder_name.lower()
     store_lower = store_name.lower()
@@ -82,18 +83,43 @@ def _find_folder_in_store(namespace, store_name: str, folder_name: str):
     if store is None:
         return None
 
-    root = store.GetRootFolder()
-    exact_folder = None
     partial_folder = None
-    for j in range(1, root.Folders.Count + 1):
-        f = root.Folders.Item(j)
-        n = f.Name.lower()
-        if n == folder_lower:
-            exact_folder = f
-            break
-        if partial_folder is None and folder_lower in n:
-            partial_folder = f
-    return exact_folder or partial_folder
+    level = [store.GetRootFolder()]
+    while level:
+        next_level = []
+        for parent in level:
+            for f in _subfolders(parent):
+                n = f.Name.lower()
+                if n == folder_lower:
+                    return f
+                if partial_folder is None and folder_lower in n:
+                    partial_folder = f
+                next_level.append(f)
+        level = next_level
+    return partial_folder
+
+
+def _subfolders(folder) -> list:
+    """Return a folder's direct subfolders, or [] if they can't be read."""
+    try:
+        return [folder.Folders.Item(i) for i in range(1, folder.Folders.Count + 1)]
+    except Exception:
+        return []
+
+
+def _mail_subfolders(folder) -> list:
+    """Return every mail folder below a folder, at any depth."""
+    found = []
+    for f in _subfolders(folder):
+        if f.DefaultItemType == OL_MAIL_ITEM:
+            found.append(f)
+        found.extend(_mail_subfolders(f))
+    return found
+
+
+def _folder_path(folder) -> str:
+    """Return a folder's path within its store, e.g. 'Inbox/JIRA'."""
+    return "/".join(folder.FolderPath.lstrip("\\").split("\\")[1:])
 
 
 @contextmanager
@@ -334,6 +360,7 @@ def _search_folder(folder, filter_str: str, max_results: int,
     table.Columns.Add("MessageClass")
     table.Sort("SentOn", not earliest_first)
 
+    path = _folder_path(folder)
     results = []
     while not table.EndOfTable and len(results) < max_results:
         try:
@@ -362,6 +389,7 @@ def _search_folder(folder, filter_str: str, max_results: int,
                 "subject": row("Subject") or "(no subject)",
                 "sender": sender,
                 "to": row("To") or "",
+                "folder": path,
             }
 
             cc = row("CC") or ""
@@ -494,25 +522,33 @@ def _extract_calendar(item, truncate: bool = True) -> dict:
 
 @mcp.tool(icons=[_icon_list_folders])
 def list_folders() -> list[dict]:
-    """List all Outlook stores and their top-level folders with item counts."""
+    """List all Outlook stores and their non-empty folders with item counts.
+
+    Subfolders are nested under "subfolders".
+    """
+    def describe(parent) -> list[dict]:
+        infos = []
+        for folder in _subfolders(parent):
+            try:
+                count = folder.Items.Count
+            except Exception:
+                count = -1
+            subfolders = describe(folder)
+            if count == 0 and not subfolders:
+                continue
+            info = {"name": folder.Name, "count": count}
+            if subfolders:
+                info["subfolders"] = subfolders
+            infos.append(info)
+        return infos
+
     with _com_session() as namespace:
         result = []
         for i in range(1, namespace.Stores.Count + 1):
             store = namespace.Stores.Item(i)
             store_info = {"store_name": store.DisplayName, "folders": []}
             try:
-                root = store.GetRootFolder()
-                for j in range(1, root.Folders.Count + 1):
-                    folder = root.Folders.Item(j)
-                    try:
-                        count = folder.Items.Count
-                    except Exception:
-                        count = -1
-                    if count != 0:
-                        store_info["folders"].append({
-                            "name": folder.Name,
-                            "count": count,
-                        })
+                store_info["folders"] = describe(store.GetRootFolder())
             except Exception as e:
                 store_info["error"] = str(e)
             result.append(store_info)
@@ -531,13 +567,14 @@ def search_emails(
     is_read: bool | None = None,
     earliest_first: bool = False,
     max_results: int = 20,
+    include_subfolders: bool = False,
 ) -> dict:
     """Search Outlook emails with filters. Returns summaries with IDs for read_item.
     Results do not include body — use read_item for full content. Sorted newest-first by default.
 
     Args:
         query: Phrase match in subject/body (words must appear together).
-        folder: Partial match on folder name (e.g. "sent" matches "Sent Items"). Defaults to Inbox of the live mailbox.
+        folder: Partial match on folder name at any depth (e.g. "sent" matches "Sent Items"). Defaults to Inbox of the live mailbox.
         sender: Filter by sender display name (partial match).
         to: Filter by recipient display name (partial match).
         date_from: Start date YYYY-MM-DD (inclusive).
@@ -546,6 +583,7 @@ def search_emails(
         is_read: Filter by read status. True = read only, False = unread only.
         earliest_first: Sort earliest-first instead of latest-first.
         max_results: If count equals max_results, more matches may exist.
+        include_subfolders: Also search the folder's subfolders (default false), where mail rules often file messages. Set true if an expected email is missing; slower on the Online Archive. Each result's "folder" says where it was found.
     """
     if date_to and not date_from:
         raise ValueError("date_from is required when date_to is specified.")
@@ -568,6 +606,15 @@ def search_emails(
             target_folder = namespace.GetDefaultFolder(OL_FOLDER_INBOX)
 
         results = _search_folder(target_folder, filter_str, max_results, earliest_first)
+        if include_subfolders:
+            for sub in _mail_subfolders(target_folder):
+                try:
+                    results += _search_folder(sub, filter_str, max_results, earliest_first)
+                except Exception:
+                    continue
+            # Stable sort keeps each folder's own SentOn order within the same minute
+            results.sort(key=lambda r: r["date"], reverse=not earliest_first)
+            results = results[:max_results]
         return {"count": len(results), "max_results": max_results, "results": results}
 
 

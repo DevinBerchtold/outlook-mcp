@@ -58,6 +58,20 @@ def test_search_emails_folder():
         assert key in email
 
 
+def test_search_emails_subfolders():
+    """Subfolders are skipped by default and searched with include_subfolders=True."""
+    top_only = search_emails(max_results=50)
+    assert top_only["count"] > 0
+    for email in top_only["results"]:
+        assert email["folder"] == "Inbox"
+
+    with_subs = search_emails(include_subfolders=True, max_results=50)
+    dates = [email["date"] for email in with_subs["results"]]
+    assert dates == sorted(dates, reverse=True)
+    for email in with_subs["results"]:
+        assert email["folder"].split("/")[0] == "Inbox"
+
+
 def test_search_emails_store():
     """store='archive' searches the Online Archive store."""
     result = search_emails(store="archive", folder="inbox")

@@ -5,7 +5,7 @@ FastMCP server exposing Outlook email and calendar via COM automation (`win32com
 ## Files
 
 - `outlook_mcp/server.py` — MCP server (tools: `list_folders`, `search_emails`, `search_calendar`, `read_item`)
-- `test_server.py` — integration tests (14 tests, ~35s)
+- `test_server.py` — integration tests (15 tests, ~35s)
 
 ## Development
 
