@@ -56,6 +56,10 @@ def test_search_emails_folder():
     email = result["results"][0]
     for key in ("id", "date", "subject", "sender", "to"):
         assert key in email
+    assert email["folder"] == "Sent Items"
+    # The same folder by its full path
+    by_path = search_emails(folder="Sent Items", max_results=1)
+    assert by_path["results"][0]["folder"] == "Sent Items"
 
 
 def test_search_emails_subfolders():

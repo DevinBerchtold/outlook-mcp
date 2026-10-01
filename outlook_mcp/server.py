@@ -62,11 +62,12 @@ def _get_namespace():
 
 
 def _find_folder_in_store(namespace, store_name: str, folder_name: str):
-    """Find a folder at any depth inside a named store, case-insensitive.
+    """Find a folder inside a named store, case-insensitive.
 
-    Prefers exact matches over partial, and shallower folders over deeper ones.
+    A path such as "Inbox/JIRA" selects each segment in turn. A plain name is
+    searched level by level, stopping at the first level with a match, so a
+    partial name like "sent" never walks the whole store.
     """
-    folder_lower = folder_name.lower()
     store_lower = store_name.lower()
 
     exact_store = None
@@ -83,20 +84,37 @@ def _find_folder_in_store(namespace, store_name: str, folder_name: str):
     if store is None:
         return None
 
-    partial_folder = None
-    level = [store.GetRootFolder()]
+    folder = store.GetRootFolder()
+    for segment in folder_name.split("/"):
+        folder = _find_subfolder(folder, segment)
+        if folder is None:
+            return None
+    return folder
+
+
+def _find_subfolder(parent, name: str):
+    """Find a folder below parent by name, breadth-first.
+
+    Within a level an exact match wins over a partial one; deeper levels are
+    only searched when the current level has no match at all.
+    """
+    name_lower = name.lower()
+    level = [parent]
     while level:
+        partial = None
         next_level = []
-        for parent in level:
-            for f in _subfolders(parent):
+        for p in level:
+            for f in _subfolders(p):
                 n = f.Name.lower()
-                if n == folder_lower:
+                if n == name_lower:
                     return f
-                if partial_folder is None and folder_lower in n:
-                    partial_folder = f
+                if partial is None and name_lower in n:
+                    partial = f
                 next_level.append(f)
+        if partial is not None:
+            return partial
         level = next_level
-    return partial_folder
+    return None
 
 
 def _subfolders(folder) -> list:
@@ -111,7 +129,11 @@ def _mail_subfolders(folder) -> list:
     """Return every mail folder below a folder, at any depth."""
     found = []
     for f in _subfolders(folder):
-        if f.DefaultItemType == OL_MAIL_ITEM:
+        try:
+            is_mail = f.DefaultItemType == OL_MAIL_ITEM
+        except Exception:
+            continue
+        if is_mail:
             found.append(f)
         found.extend(_mail_subfolders(f))
     return found
@@ -574,7 +596,7 @@ def search_emails(
 
     Args:
         query: Phrase match in subject/body (words must appear together).
-        folder: Partial match on folder name at any depth (e.g. "sent" matches "Sent Items"). Defaults to Inbox of the live mailbox.
+        folder: Folder name, partial match (e.g. "sent" matches "Sent Items"), or a path for a subfolder (e.g. "Inbox/JIRA", as shown in each result's "folder"). Defaults to Inbox of the live mailbox.
         sender: Filter by sender display name (partial match).
         to: Filter by recipient display name (partial match).
         date_from: Start date YYYY-MM-DD (inclusive).
