@@ -542,7 +542,7 @@ def _extract_calendar(item, truncate: bool = True) -> dict:
 # MCP Tools
 # ---------------------------------------------------------------------------
 
-@mcp.tool(icons=[_icon_list_folders])
+@mcp.tool(icons=[_icon_list_folders], annotations={"readOnlyHint": True})
 def list_folders() -> list[dict]:
     """List all Outlook stores and their non-empty folders with item counts.
 
@@ -577,7 +577,7 @@ def list_folders() -> list[dict]:
         return result
 
 
-@mcp.tool(icons=[_icon_search_emails])
+@mcp.tool(icons=[_icon_search_emails], annotations={"readOnlyHint": True})
 def search_emails(
     query: str = "",
     folder: str = "",
@@ -640,7 +640,7 @@ def search_emails(
         return {"count": len(results), "max_results": max_results, "results": results}
 
 
-@mcp.tool(icons=[_icon_search_calendar])
+@mcp.tool(icons=[_icon_search_calendar], annotations={"readOnlyHint": True})
 def search_calendar(
     date_from: str = "",
     date_to: str = "",
@@ -737,7 +737,7 @@ def search_calendar(
         return {"count": len(results), "max_results": max_results, "results": results}
 
 
-@mcp.tool(icons=[_icon_read_item])
+@mcp.tool(icons=[_icon_read_item], annotations={"readOnlyHint": True})
 def read_item(entry_id: str, full_body: bool = False) -> dict:
     """Read the full content of an email, calendar event, or URL by its ID.
 
